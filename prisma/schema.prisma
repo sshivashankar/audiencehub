@@ -1,0 +1,673 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============ Multi-Tenancy ============
+
+model Organization {
+  id                    String                @id @default(cuid())
+  name                  String
+  slug                  String                @unique
+  description           String?
+  website               String?
+  logoUrl               String?
+  brandPrimaryColor     String                @default("#000000")
+  brandSecondaryColor   String                @default("#ffffff")
+  customDomain          String?               @unique
+  apiKey                String?               @unique @db.VarChar(255)
+  isActive              Boolean               @default(true)
+  maxUsers              Int                   @default(1000)
+  maxEvents             Int                   @default(500)
+  tier                  String                @default("free") // free, pro, enterprise
+  features              Json                  @default("{}")
+  
+  // Relationships
+  departments           Department[]          @relation("OrganizationDepartments")
+  teams                 Team[]                @relation("OrganizationTeams")
+  users                 User[]                @relation("OrganizationUsers")
+  roles                 Role[]                @relation("OrganizationRoles")
+  permissions           Permission[]          @relation("OrganizationPermissions")
+  events                Event[]               @relation("OrganizationEvents")
+  auditLogs             AuditLog[]            @relation("OrganizationAuditLogs")
+  reports               Report[]              @relation("OrganizationReports")
+
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@index([slug])
+  @@index([customDomain])
+  @@index([deletedAt])
+}
+
+model Department {
+  id                    String                @id @default(cuid())
+  organizationId        String
+  name                  String
+  description           String?
+  color                 String                @default("#1f2937")
+  managerId             String?
+  
+  // Relationships
+  organization          Organization         @relation("OrganizationDepartments", fields: [organizationId], references: [id], onDelete: Cascade)
+  manager               User?                 @relation("DepartmentManager", fields: [managerId], references: [id], onDelete: SetNull)
+  users                 User[]                @relation("DepartmentUsers")
+  participants          Participant[]         @relation("DepartmentParticipants")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([managerId])
+  @@index([deletedAt])
+}
+
+model Team {
+  id                    String                @id @default(cuid())
+  organizationId        String
+  name                  String
+  description           String?
+  memberIds             String[]              @default([])
+  leaderIds             String[]              @default([])
+  
+  // Relationships
+  organization          Organization         @relation("OrganizationTeams", fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([deletedAt])
+}
+
+// ============ Authentication & Authorization ============
+
+model User {
+  id                    String                @id @default(cuid())
+  organizationId        String
+  email                 String                @unique
+  firstName             String?
+  lastName              String?
+  passwordHash          String?
+  phoneNumber           String?
+  avatarUrl             String?
+  isEmailVerified       Boolean               @default(false)
+  isTwoFactorEnabled    Boolean               @default(false)
+  departmentId          String?
+  designation           String?
+  oauthProvider         String?               // google, microsoft
+  oauthId               String?               @unique
+  lastLoginAt           DateTime?
+  lastLoginIp           String?
+  lastLoginUserAgent    String?
+  isActive              Boolean               @default(true)
+  locale                String                @default("en-US")
+  timezone              String                @default("UTC")
+  
+  // Relationships
+  organization          Organization         @relation("OrganizationUsers", fields: [organizationId], references: [id], onDelete: Cascade)
+  department            Department?           @relation("DepartmentUsers", fields: [departmentId], references: [id], onDelete: SetNull)
+  managedDepartment     Department?           @relation("DepartmentManager")
+  roles                 UserRole[]            @relation("UserRoles")
+  sessions              Session[]             @relation("UserSessions")
+  hostedEvents          Event[]               @relation("EventHost")
+  cohostedEvents        EventCoHost[]         @relation("EventCoHost")
+  participants          Participant[]         @relation("ParticipantUser")
+  votes                 Vote[]                @relation("UserVotes")
+  questions             Question[]            @relation("QuestionAsker")
+  upvotes               Upvote[]              @relation("UpvoteUser")
+  auditLogs             AuditLog[]            @relation("AuditLogUser")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([email])
+  @@index([deletedAt])
+}
+
+model Role {
+  id                    String                @id @default(cuid())
+  organizationId        String?
+  name                  String
+  description           String?
+  isSystem              Boolean               @default(false)
+  
+  // Relationships
+  organization          Organization?        @relation("OrganizationRoles", fields: [organizationId], references: [id], onDelete: Cascade)
+  userRoles             UserRole[]            @relation("RoleUserRoles")
+  permissions           RolePermission[]      @relation("RolePermissions")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([isSystem])
+}
+
+model Permission {
+  id                    String                @id @default(cuid())
+  organizationId        String?
+  name                  String
+  description           String?
+  resource              String                // event, poll, question, report, etc.
+  action                String                // create, read, update, delete, moderate
+  isSystem              Boolean               @default(false)
+  
+  // Relationships
+  organization          Organization?        @relation("OrganizationPermissions", fields: [organizationId], references: [id], onDelete: Cascade)
+  rolePermissions       RolePermission[]      @relation("PermissionRolePermissions")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([organizationId, resource, action])
+  @@index([organizationId])
+  @@index([resource])
+}
+
+model UserRole {
+  userId                String
+  roleId                String
+  organizationId        String?
+  
+  // Relationships
+  user                  User                  @relation("UserRoles", fields: [userId], references: [id], onDelete: Cascade)
+  role                  Role                  @relation("RoleUserRoles", fields: [roleId], references: [id], onDelete: Cascade)
+  organization          Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+
+  @@id([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@index([organizationId])
+}
+
+model RolePermission {
+  roleId                String
+  permissionId          String
+  
+  // Relationships
+  role                  Role                  @relation("RolePermissions", fields: [roleId], references: [id], onDelete: Cascade)
+  permission            Permission            @relation("PermissionRolePermissions", fields: [permissionId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+
+  @@id([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+model Session {
+  id                    String                @id @default(cuid())
+  userId                String
+  organizationId        String
+  token                 String                @unique
+  refreshToken          String?               @unique
+  expiresAt             DateTime
+  refreshExpiresAt      DateTime?
+  ipAddress             String?
+  userAgent             String?
+  deviceName            String?
+  isRevoked             Boolean               @default(false)
+  
+  // Relationships
+  user                  User                  @relation("UserSessions", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// ============ Events ============
+
+model Event {
+  id                    String                @id @default(cuid())
+  organizationId        String
+  hostId                String
+  title                 String
+  description           String?
+  status                String                @default("draft") // draft, scheduled, live, ended, paused
+  eventType             String                @default("general") // general, meeting, training, conference
+  startTime             DateTime?
+  endTime               DateTime?
+  joinCode              String?               @unique @db.VarChar(8)
+  joinUrl               String?               @unique
+  qrCode                String?
+  isPublic              Boolean               @default(false)
+  allowAnonymous        Boolean               @default(true)
+  allowDuplicateNames   Boolean               @default(false)
+  maxParticipants       Int?
+  presentationMode      String                @default("poll") // poll, qa, wordcloud, mixed
+  brandLogoUrl          String?
+  brandBackgroundColor  String?
+  brandTextColor        String?
+  timezone              String                @default("UTC")
+  language              String                @default("en-US")
+  recordingEnabled      Boolean               @default(false)
+  recordingUrl          String?
+  notes                 String?
+  tags                  String[]              @default([])
+  metadata              Json                  @default("{}")
+  
+  // Statistics (denormalized for performance)
+  totalParticipants     Int                   @default(0)
+  totalQuestions        Int                   @default(0)
+  totalVotes            Int                   @default(0)
+  engagementScore       Float                 @default(0.0)
+  
+  // Relationships
+  organization          Organization         @relation("OrganizationEvents", fields: [organizationId], references: [id], onDelete: Cascade)
+  host                  User                  @relation("EventHost", fields: [hostId], references: [id], onDelete: Cascade)
+  coHosts               EventCoHost[]         @relation("EventCoHosts")
+  participants          Participant[]         @relation("EventParticipants")
+  attendance            Attendance[]          @relation("EventAttendance")
+  polls                 Poll[]                @relation("EventPolls")
+  questions             Question[]            @relation("EventQuestions")
+  wordEntries           WordEntry[]           @relation("EventWordEntries")
+  analytics             Analytics?            @relation("EventAnalytics")
+  reports               Report[]              @relation("EventReports")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@unique([organizationId, joinCode])
+  @@index([organizationId])
+  @@index([hostId])
+  @@index([status])
+  @@index([startTime])
+  @@index([deletedAt])
+  @@fulltext([title, description])
+}
+
+model EventCoHost {
+  eventId               String
+  userId                String
+  role                  String                @default("co_host") // co_host, moderator
+  
+  // Relationships
+  event                 Event                 @relation("EventCoHosts", fields: [eventId], references: [id], onDelete: Cascade)
+  user                  User                  @relation("EventCoHost", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+
+  @@id([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+}
+
+// ============ Participants ============
+
+model Participant {
+  id                    String                @id @default(cuid())
+  eventId               String
+  userId                String?
+  name                  String
+  email                 String?
+  phoneNumber           String?
+  departmentId          String?
+  designation           String?
+  isAnonymous           Boolean               @default(false)
+  joinMethod            String                @default("url") // url, qr, code
+  sessionId             String?               @unique
+  status                String                @default("joined") // joined, left, inactive
+  engagementScore       Float                 @default(0.0)
+  pollResponses         Int                   @default(0)
+  questionsAsked        Int                   @default(0)
+  upvotesGiven          Int                   @default(0)
+  metadata              Json                  @default("{}")
+  
+  // Relationships
+  event                 Event                 @relation("EventParticipants", fields: [eventId], references: [id], onDelete: Cascade)
+  user                  User?                 @relation("ParticipantUser", fields: [userId], references: [id], onDelete: SetNull)
+  department            Department?           @relation("DepartmentParticipants", fields: [departmentId], references: [id], onDelete: SetNull)
+  attendance            Attendance?           @relation("ParticipantAttendance", fields: [id], references: [participantId])
+  votes                 Vote[]                @relation("ParticipantVotes")
+  questions             Question[]            @relation("ParticipantQuestions")
+  upvotes               Upvote[]              @relation("ParticipantUpvotes")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@unique([eventId, email])
+  @@index([eventId])
+  @@index([userId])
+  @@index([departmentId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Attendance {
+  id                    String                @id @default(cuid())
+  eventId               String
+  participantId         String                @unique
+  joinTime              DateTime              @default(now())
+  leaveTime             DateTime?
+  totalDuration         Int                   @default(0) // in seconds
+  isPresent             Boolean               @default(true)
+  isLate                Boolean               @default(false)
+  lateBy                Int?                  // in seconds
+  
+  // Relationships
+  event                 Event                 @relation("EventAttendance", fields: [eventId], references: [id], onDelete: Cascade)
+  participant           Participant           @relation("ParticipantAttendance", fields: [participantId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([eventId])
+  @@index([participantId])
+}
+
+// ============ Polls ============
+
+model Poll {
+  id                    String                @id @default(cuid())
+  eventId               String
+  title                 String
+  description           String?
+  type                  String                // MULTIPLE_CHOICE, MULTIPLE_SELECT, YES_NO, RATING, NPS, QUIZ, OPEN_TEXT, RANKING, IMAGE, WORDCLOUD
+  displayType           String                @default("grid") // grid, list, carousel
+  status                String                @default("draft") // draft, scheduled, live, ended
+  scheduledStartTime    DateTime?
+  scheduledEndTime      DateTime?
+  actualStartTime       DateTime?
+  actualEndTime         DateTime?
+  timeLimit             Int?                  // in seconds
+  isAnonymous           Boolean               @default(true)
+  isLocked              Boolean               @default(false)
+  randomizeOptions      Boolean               @default(false)
+  showResults           Boolean               @default(true)
+  resultsVisibility     String                @default("real_time") // real_time, after_poll_end, never
+  correctAnswerIndex    Int?
+  explanationText       String?
+  metadata              Json                  @default("{}")
+  
+  // Statistics (denormalized)
+  totalResponses        Int                   @default(0)
+  responseRate          Float                 @default(0.0)
+  
+  // Relationships
+  event                 Event                 @relation("EventPolls", fields: [eventId], references: [id], onDelete: Cascade)
+  options               PollOption[]          @relation("PollOptions")
+  votes                 Vote[]                @relation("PollVotes")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@index([eventId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model PollOption {
+  id                    String                @id @default(cuid())
+  pollId                String
+  text                  String
+  imageUrl              String?
+  imageAlt              String?
+  order                 Int
+  voteCount             Int                   @default(0)
+  percentage            Float                 @default(0.0)
+  isCorrect             Boolean               @default(false)
+  metadata              Json                  @default("{}")
+  
+  // Relationships
+  poll                  Poll                  @relation("PollOptions", fields: [pollId], references: [id], onDelete: Cascade)
+  votes                 Vote[]                @relation("OptionVotes")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([pollId, order])
+  @@index([pollId])
+}
+
+model Vote {
+  id                    String                @id @default(cuid())
+  pollId                String
+  optionId              String?
+  participantId         String
+  userId                String?
+  responseText          String?               // for OPEN_TEXT and RANKING types
+  ipAddress             String?
+  userAgent             String?
+  metadata              Json                  @default("{}")
+  
+  // Relationships
+  poll                  Poll                  @relation("PollVotes", fields: [pollId], references: [id], onDelete: Cascade)
+  option                PollOption?           @relation("OptionVotes", fields: [optionId], references: [id], onDelete: SetNull)
+  participant           Participant           @relation("ParticipantVotes", fields: [participantId], references: [id], onDelete: Cascade)
+  user                  User?                 @relation("UserVotes", fields: [userId], references: [id], onDelete: SetNull)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([pollId, participantId])
+  @@index([pollId])
+  @@index([participantId])
+  @@index([userId])
+}
+
+// ============ Q&A ============
+
+model Question {
+  id                    String                @id @default(cuid())
+  eventId               String
+  participantId         String
+  userId                String?
+  text                  String
+  answerText            String?
+  status                String                @default("pending") // pending, approved, answered, rejected, duplicate
+  isAnonymous           Boolean               @default(true)
+  isPinned              Boolean               @default(false)
+  upvoteCount           Int                   @default(0)
+  sentiment              String?               // positive, neutral, negative (AI-generated)
+  topic                 String?                // AI-extracted topic
+  isDuplicate           Boolean               @default(false)
+  duplicateOfId         String?               // ID of original question if duplicate
+  moderatedBy           String?
+  moderatedAt           DateTime?
+  answeredBy            String?
+  answeredAt            DateTime?
+  metadata              Json                  @default("{}")
+  
+  // Relationships
+  event                 Event                 @relation("EventQuestions", fields: [eventId], references: [id], onDelete: Cascade)
+  participant           Participant           @relation("ParticipantQuestions", fields: [participantId], references: [id], onDelete: Cascade)
+  asker                 User?                 @relation("QuestionAsker", fields: [userId], references: [id], onDelete: SetNull)
+  upvotes               Upvote[]              @relation("QuestionUpvotes")
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@index([eventId])
+  @@index([participantId])
+  @@index([status])
+  @@index([isPinned])
+  @@index([sentiment])
+  @@index([topic])
+  @@index([deletedAt])
+  @@fulltext([text, answerText])
+}
+
+model Upvote {
+  id                    String                @id @default(cuid())
+  questionId            String
+  participantId         String
+  userId                String?
+  
+  // Relationships
+  question              Question              @relation("QuestionUpvotes", fields: [questionId], references: [id], onDelete: Cascade)
+  participant           Participant           @relation("ParticipantUpvotes", fields: [participantId], references: [id], onDelete: Cascade)
+  user                  User?                 @relation("UpvoteUser", fields: [userId], references: [id], onDelete: SetNull)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+
+  @@unique([questionId, participantId])
+  @@index([questionId])
+  @@index([participantId])
+  @@index([userId])
+}
+
+// ============ Word Cloud ============
+
+model WordEntry {
+  id                    String                @id @default(cuid())
+  eventId               String
+  word                  String
+  count                 Int                   @default(1)
+  sentiment             String?               // positive, neutral, negative
+  language              String                @default("en")
+  isFiltered            Boolean               @default(false)
+  originalWord          String?               // mapping to normalized word
+  metadata              Json                  @default("{}")
+  
+  // Relationships
+  event                 Event                 @relation("EventWordEntries", fields: [eventId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([eventId, word])
+  @@index([eventId])
+  @@index([sentiment])
+}
+
+// ============ Analytics ============
+
+model Analytics {
+  id                    String                @id @default(cuid())
+  eventId               String                @unique
+  totalParticipants     Int                   @default(0)
+  peakParticipants      Int                   @default(0)
+  averageSessionDuration Int                 @default(0) // in seconds
+  attendanceRate        Float                 @default(0.0)
+  engagementRate        Float                 @default(0.0)
+  pollResponseRate      Float                 @default(0.0)
+  qaActivityRate        Float                 @default(0.0)
+  wordCloudActivityRate Float                 @default(0.0)
+  sentimentScore        Float                 @default(0.0) // -1.0 to 1.0
+  topicsExtracted       String[]              @default([])
+  departmentBreakdown   Json                  @default("{}")
+  hourlyBreakdown       Json                  @default("{}")
+  deviceBreakdown       Json                  @default("{}")
+  
+  // Relationships
+  event                 Event                 @relation("EventAnalytics", fields: [eventId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([eventId])
+}
+
+// ============ Reports ============
+
+model Report {
+  id                    String                @id @default(cuid())
+  eventId               String
+  organizationId        String
+  title                 String
+  format                String                // pdf, excel, csv, pptx
+  status                String                @default("generating") // generating, ready, failed
+  fileUrl               String?
+  fileSize              Int?
+  sections              String[]              @default([])
+  generatedBy           String?               // user ID
+  errorMessage          String?
+  metadata              Json                  @default("{}")
+  expiresAt             DateTime?             // auto-delete after 30 days
+  
+  // Relationships
+  event                 Event                 @relation("EventReports", fields: [eventId], references: [id], onDelete: Cascade)
+  organization          Organization         @relation("OrganizationReports", fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@index([eventId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([deletedAt])
+}
+
+// ============ Audit Logs ============
+
+model AuditLog {
+  id                    String                @id @default(cuid())
+  organizationId        String
+  userId                String?
+  action                String                // create, read, update, delete, moderate, export
+  resource              String                // event, poll, question, report, user, etc.
+  resourceId            String?
+  changes               Json?                 @default("{}")
+  ipAddress             String?
+  userAgent             String?
+  deviceName            String?
+  status                String                @default("success") // success, failure
+  errorMessage          String?
+  metadata              Json                  @default("{}")
+  
+  // Relationships
+  organization          Organization         @relation("OrganizationAuditLogs", fields: [organizationId], references: [id], onDelete: Cascade)
+  user                  User?                 @relation("AuditLogUser", fields: [userId], references: [id], onDelete: SetNull)
+  
+  // Timestamps
+  createdAt             DateTime              @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+}

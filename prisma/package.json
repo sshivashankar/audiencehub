@@ -1,0 +1,22 @@
+{
+  "name": "@audiencehub/prisma",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AudienceHub Database Schema",
+  "scripts": {
+    "migrate": "prisma migrate dev",
+    "generate": "prisma generate",
+    "push": "prisma db push",
+    "seed": "tsx seed.ts",
+    "reset": "prisma migrate reset",
+    "studio": "prisma studio"
+  },
+  "devDependencies": {
+    "@prisma/cli": "^5.7.0",
+    "prisma": "^5.7.0",
+    "tsx": "^4.7.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.7.0"
+  }
+}
